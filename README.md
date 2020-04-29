@@ -1,7 +1,7 @@
 # Root_kit
 Tests were ran on Duke virtual machine with Ubuntu 16.
 
-Please see [project5.pdf] for detailed requirement.
+Please see [project5.pdf](https://github.com/ys270/Root_kit/blob/master/project-5.pdf) for detailed requirement.
 
 #### How To Run
 ```
